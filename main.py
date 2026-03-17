@@ -1,5 +1,6 @@
 import customtkinter as ctk
 import tkinter as tk
+from tkinter import messagebox
 from datetime import datetime
 import os
 import sys
@@ -10,6 +11,17 @@ MONTHS_RU = [
     "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
     "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
 ]
+
+_font_cache = {}
+
+
+def get_font(size, weight="normal"):
+    key = (size, weight)
+    f = _font_cache.get(key)
+    if f is None:
+        f = ctk.CTkFont(size=size, weight=weight)
+        _font_cache[key] = f
+    return f
 
 
 def _bundle_dir():
@@ -364,11 +376,11 @@ class PinDialog(ctk.CTkToplevel):
 
 
 class ItemRow(ctk.CTkFrame):
-    HOVER_COLOR = "#F0F4FF"
-    NORMAL_COLOR = "#FFFFFF"
+    _NORMAL = ("#FFFFFF", "#2B2B2B")
+    _HOVER = ("#F0F4FF", "#363645")
 
     def __init__(self, parent, item, current_month, on_change, app):
-        super().__init__(parent, fg_color=self.NORMAL_COLOR, height=24, corner_radius=0)
+        super().__init__(parent, fg_color=self._NORMAL, height=24, corner_radius=0)
         self.pack_propagate(False)
         self.grid_propagate(False)
         self.item = item
@@ -388,7 +400,7 @@ class ItemRow(ctk.CTkFrame):
 
         icon = "🔁" if item["is_recurring"] else "·"
         ctk.CTkLabel(self, text=icon, width=20, anchor="center",
-                     font=ctk.CTkFont(size=10), text_color="#999"
+                     font=get_font(10), text_color="#999"
                      ).grid(row=0, column=1, padx=(2, 0), sticky="w")
 
         raw_date = item.get("date")
@@ -406,18 +418,18 @@ class ItemRow(ctk.CTkFrame):
         else:
             date_text = "—"
         ctk.CTkLabel(self, text=date_text, width=40, anchor="w",
-                     font=ctk.CTkFont(size=11), text_color="gray"
+                     font=get_font(11), text_color="gray"
                      ).grid(row=0, column=2, padx=(2, 4), sticky="w")
 
         ctk.CTkLabel(self, text=item["name"], anchor="w",
-                     font=ctk.CTkFont(size=12)
+                     font=get_font(12)
                      ).grid(row=0, column=3, sticky="w")
 
         display_amount = item["effective_amount"]
         amount_text = f"{format_amount(display_amount)} ₽"
-        color = "#2E7D32" if item["category"] == "income" else "#C62828"
+        color = ("#2E7D32", "#66BB6A") if item["category"] == "income" else ("#C62828", "#EF5350")
         ctk.CTkLabel(self, text=amount_text, text_color=color, anchor="e",
-                     width=110, font=ctk.CTkFont(size=12)
+                     width=110, font=get_font(12)
                      ).grid(row=0, column=4, padx=(4, 10), sticky="e")
 
         self._bind_events(self)
@@ -430,10 +442,10 @@ class ItemRow(ctk.CTkFrame):
             self._bind_events(child)
 
     def _on_enter(self, event=None):
-        self.configure(fg_color=self.HOVER_COLOR)
+        self.configure(fg_color=self._HOVER)
 
     def _on_leave(self, event=None):
-        self.configure(fg_color=self.NORMAL_COLOR)
+        self.configure(fg_color=self._NORMAL)
 
     def _show_menu(self, event):
         menu = tk.Menu(self, tearoff=0)
@@ -449,19 +461,24 @@ class ItemRow(ctk.CTkFrame):
         menu.tk_popup(event.x_root, event.y_root)
 
     def _deactivate(self):
-        db.deactivate_item(self.item["id"], self.current_month)
-        self.on_change()
+        if messagebox.askyesno("\u041e\u0442\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435", f"\u041e\u0442\u043a\u043b\u044e\u0447\u0438\u0442\u044c \u00ab{self.item['name']}\u00bb?"):
+            db.deactivate_item(self.item["id"], self.current_month)
+            self.on_change()
 
     def _activate(self):
         db.activate_item(self.item["id"])
         self.on_change()
 
     def _delete(self):
-        db.delete_item(self.item["id"])
-        self.on_change()
+        if messagebox.askyesno("\u0423\u0434\u0430\u043b\u0435\u043d\u0438\u0435", f"\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u00ab{self.item['name']}\u00bb?"):
+            db.delete_item(self.item["id"])
+            self.on_change()
 
     def _toggle_checked(self):
-        db.set_checked(self.item["id"], self.current_month, self.check_var.get())
+        checked = self.check_var.get()
+        db.set_checked(self.item["id"], self.current_month, checked)
+        self.item["is_checked"] = int(checked)
+        self.app._update_totals()
 
     def _edit_recurring(self):
         EditRecurringDialog(self.app, self.item, self.current_month, on_save=self.on_change)
@@ -471,7 +488,8 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        ctk.set_appearance_mode("light")
+        saved_theme = db.get_setting("theme", "light")
+        ctk.set_appearance_mode(saved_theme)
         ctk.set_default_color_theme("blue")
 
         self.title("Billing — Учёт финансов")
@@ -499,54 +517,64 @@ class App(ctk.CTk):
         nav.pack(fill="x", padx=20, pady=(12, 6))
 
         ctk.CTkButton(nav, text="◀", width=36, height=30, command=self._prev_month).pack(side="left")
-        self.month_label = ctk.CTkLabel(nav, text="", font=ctk.CTkFont(size=18, weight="bold"))
+        self.month_label = ctk.CTkLabel(nav, text="", font=get_font(18, "bold"))
         self.month_label.pack(side="left", expand=True)
         ctk.CTkButton(nav, text="▶", width=36, height=30, command=self._next_month).pack(side="right")
+        self.theme_btn = ctk.CTkButton(nav, text="☀" if ctk.get_appearance_mode() == "Dark" else "🌙",
+                       width=36, height=30,
+                       fg_color="transparent", hover_color=("#E0E0E0", "#444"),
+                       text_color=("#333", "#DDD"),
+                       command=self._toggle_theme)
+        self.theme_btn.pack(side="right", padx=(0, 4))
 
-        inc_header = ctk.CTkFrame(self, height=30, fg_color="#E8EDF5", corner_radius=0)
+        inc_header = ctk.CTkFrame(self, height=30, fg_color=("#E8EDF5", "#2D3748"), corner_radius=0)
         inc_header.pack(fill="x", padx=20, pady=(8, 0))
         inc_header.pack_propagate(False)
-        ctk.CTkLabel(inc_header, text="  Доходы", font=ctk.CTkFont(size=12, weight="bold"),
-                     text_color="#333").pack(side="left")
+        self.inc_header_label = ctk.CTkLabel(inc_header, text="  Доходы",
+                     font=get_font(12, "bold"),
+                     text_color=("#333", "#DDD"))
+        self.inc_header_label.pack(side="left")
         btn_add_inc = ctk.CTkButton(inc_header, text="+", width=24, height=24,
-                                    font=ctk.CTkFont(size=14, weight="bold"),
+                                    font=get_font(14, "bold"),
                                     fg_color="#7986CB", hover_color="#5C6BC0",
                                     corner_radius=6, command=self._add_income)
         btn_add_inc.pack(side="right", padx=6)
         Tooltip(btn_add_inc, "Добавить доход")
 
-        self.income_frame = ctk.CTkScrollableFrame(self, height=275, fg_color="#FFFFFF",
+        self.income_frame = ctk.CTkScrollableFrame(self, height=275, fg_color=("#FFFFFF", "#2B2B2B"),
                                                     corner_radius=0, border_width=1,
-                                                    border_color="#D0D0D0")
+                                                    border_color=("#D0D0D0", "#444"))
         self.income_frame.pack(fill="x", padx=20)
 
-        exp_header = ctk.CTkFrame(self, height=30, fg_color="#FDECEA", corner_radius=0)
+        exp_header = ctk.CTkFrame(self, height=30, fg_color=("#FDECEA", "#3D2B2B"), corner_radius=0)
         exp_header.pack(fill="x", padx=20, pady=(8, 0))
         exp_header.pack_propagate(False)
-        ctk.CTkLabel(exp_header, text="  Расходы", font=ctk.CTkFont(size=12, weight="bold"),
-                     text_color="#333").pack(side="left")
+        self.exp_header_label = ctk.CTkLabel(exp_header, text="  Расходы",
+                     font=get_font(12, "bold"),
+                     text_color=("#333", "#DDD"))
+        self.exp_header_label.pack(side="left")
         btn_add_exp = ctk.CTkButton(exp_header, text="+", width=24, height=24,
-                                    font=ctk.CTkFont(size=14, weight="bold"),
+                                    font=get_font(14, "bold"),
                                     fg_color="#EF9A9A", hover_color="#EF5350",
                                     corner_radius=6, command=self._add_expense)
         btn_add_exp.pack(side="right", padx=6)
         Tooltip(btn_add_exp, "Добавить расход")
 
-        self.expense_frame = ctk.CTkScrollableFrame(self, height=275, fg_color="#FFFFFF",
+        self.expense_frame = ctk.CTkScrollableFrame(self, height=275, fg_color=("#FFFFFF", "#2B2B2B"),
                                                      corner_radius=0, border_width=1,
-                                                     border_color="#D0D0D0")
+                                                     border_color=("#D0D0D0", "#444"))
         self.expense_frame.pack(fill="x", padx=20)
 
         totals = ctk.CTkFrame(self, corner_radius=12)
         totals.pack(fill="x", padx=20, pady=(8, 10))
 
-        self.income_total_label = ctk.CTkLabel(totals, text="", font=ctk.CTkFont(size=12))
+        self.income_total_label = ctk.CTkLabel(totals, text="", font=get_font(12))
         self.income_total_label.pack(anchor="w", padx=16, pady=(8, 0))
 
-        self.expense_total_label = ctk.CTkLabel(totals, text="", font=ctk.CTkFont(size=12))
+        self.expense_total_label = ctk.CTkLabel(totals, text="", font=get_font(12))
         self.expense_total_label.pack(anchor="w", padx=16)
 
-        self.balance_label = ctk.CTkLabel(totals, text="", font=ctk.CTkFont(size=14, weight="bold"))
+        self.balance_label = ctk.CTkLabel(totals, text="", font=get_font(14, "bold"))
         self.balance_label.pack(anchor="w", padx=16, pady=(2, 8))
 
     def _prev_month(self):
@@ -564,7 +592,6 @@ class App(ctk.CTk):
         AddItemDialog(self, self.current_month, on_save=self.refresh, preset_category="expense")
 
     def _clear_frame(self, frame):
-        frame.update_idletasks()
         for widget in frame.winfo_children():
             widget.destroy()
 
@@ -577,9 +604,11 @@ class App(ctk.CTk):
         expenses = sort_items([dict(r) for r in items if r["category"] == "expense"], self.current_month)
 
         self._clear_frame(self.income_frame)
+        is_dark = ctk.get_appearance_mode() == "Dark"
+        sep_bg = "#444" if is_dark else "#E0E0E0"
         for i, item in enumerate(incomes):
             if i > 0:
-                tk.Frame(self.income_frame, height=1, bg="#E0E0E0").pack(fill="x")
+                tk.Frame(self.income_frame, height=1, bg=sep_bg).pack(fill="x")
             row = ItemRow(self.income_frame, item, self.current_month, self.refresh, self)
             row.pack(fill="x")
 
@@ -589,16 +618,33 @@ class App(ctk.CTk):
         self._clear_frame(self.expense_frame)
         for i, item in enumerate(expenses):
             if i > 0:
-                tk.Frame(self.expense_frame, height=1, bg="#E0E0E0").pack(fill="x")
+                tk.Frame(self.expense_frame, height=1, bg=sep_bg).pack(fill="x")
             row = ItemRow(self.expense_frame, item, self.current_month, self.refresh, self)
             row.pack(fill="x")
 
         if not expenses:
             ctk.CTkLabel(self.expense_frame, text="Нет записей", text_color="gray").pack(pady=8)
 
-        total_in = sum(r["effective_amount"] for r in incomes)
-        total_out = sum(r["effective_amount"] for r in expenses)
+        self._incomes = incomes
+        self._expenses = expenses
+        self._update_totals()
+
+    def _update_totals(self):
+        total_in = sum(r["effective_amount"] for r in self._incomes)
+        total_out = sum(r["effective_amount"] for r in self._expenses)
+        checked_in = sum(r["effective_amount"] for r in self._incomes if r.get("is_checked"))
+        checked_out = sum(r["effective_amount"] for r in self._expenses if r.get("is_checked"))
         balance = total_in - total_out
+
+        if checked_in > 0:
+            self.inc_header_label.configure(text=f"  Доходы ({format_amount(checked_in)} ₽)")
+        else:
+            self.inc_header_label.configure(text="  Доходы")
+
+        if checked_out > 0:
+            self.exp_header_label.configure(text=f"  Расходы ({format_amount(checked_out)} ₽)")
+        else:
+            self.exp_header_label.configure(text="  Расходы")
 
         self.income_total_label.configure(text=f"Доходы:  {format_amount(total_in)} ₽")
         self.expense_total_label.configure(text=f"Расходы: {format_amount(total_out)} ₽")
@@ -606,6 +652,13 @@ class App(ctk.CTk):
         b_color = "#4CAF50" if balance >= 0 else "#EF5350"
         sign = "+" if balance > 0 else ""
         self.balance_label.configure(text=f"Баланс:  {sign}{format_amount(balance)} ₽", text_color=b_color)
+
+    def _toggle_theme(self):
+        new_mode = "dark" if ctk.get_appearance_mode() == "Light" else "light"
+        ctk.set_appearance_mode(new_mode)
+        db.set_setting("theme", new_mode)
+        self.theme_btn.configure(text="☀" if new_mode == "dark" else "🌙")
+        self.refresh()
 
 
 if __name__ == "__main__":

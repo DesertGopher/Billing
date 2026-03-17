@@ -5,12 +5,18 @@ APP_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Bill
 os.makedirs(APP_DIR, exist_ok=True)
 DB_PATH = os.path.join(APP_DIR, "billing.db")
 
+_conn = None
+
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    global _conn
+    if _conn is None:
+        _conn = sqlite3.connect(DB_PATH)
+        _conn.row_factory = sqlite3.Row
+        _conn.execute("PRAGMA foreign_keys = ON")
+        _conn.execute("PRAGMA journal_mode = WAL")
+        _conn.execute("PRAGMA synchronous = NORMAL")
+    return _conn
 
 
 def _column_exists(conn, table, column):
@@ -52,8 +58,19 @@ def init_db():
     """)
     if not _column_exists(conn, "items", "date"):
         conn.execute("ALTER TABLE items ADD COLUMN date TEXT")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS monthly_budget (
+            month  TEXT PRIMARY KEY,
+            amount REAL NOT NULL DEFAULT 0
+        )
+    """)
     conn.commit()
-    conn.close()
 
 
 def add_item(name, amount, category, is_recurring, start_month, date=None):
@@ -68,7 +85,6 @@ def add_item(name, amount, category, is_recurring, start_month, date=None):
             (cursor.lastrowid, amount, start_month),
         )
     conn.commit()
-    conn.close()
 
 
 def update_recurring_amount(item_id, new_amount, effective_month, only_this_month=False):
@@ -109,7 +125,6 @@ def update_recurring_amount(item_id, new_amount, effective_month, only_this_mont
         (new_amount, item_id),
     )
     conn.commit()
-    conn.close()
 
 
 def _next_month(month_str):
@@ -128,7 +143,6 @@ def deactivate_item(item_id, end_month):
         (end_month, item_id),
     )
     conn.commit()
-    conn.close()
 
 
 def activate_item(item_id):
@@ -138,28 +152,24 @@ def activate_item(item_id):
         (item_id,),
     )
     conn.commit()
-    conn.close()
 
 
 def delete_item(item_id):
     conn = get_connection()
     conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
     conn.commit()
-    conn.close()
 
 
 def update_item_name(item_id, new_name):
     conn = get_connection()
     conn.execute("UPDATE items SET name = ? WHERE id = ?", (new_name, item_id))
     conn.commit()
-    conn.close()
 
 
 def update_item_date(item_id, new_date):
     conn = get_connection()
     conn.execute("UPDATE items SET date = ? WHERE id = ?", (new_date, item_id))
     conn.commit()
-    conn.close()
 
 
 def set_checked(item_id, month, checked):
@@ -170,7 +180,6 @@ def set_checked(item_id, month, checked):
         (item_id, month, int(checked)),
     )
     conn.commit()
-    conn.close()
 
 
 def get_items_for_month(month_str):
@@ -196,5 +205,34 @@ def get_items_for_month(month_str):
         """,
         (month_str, month_str, month_str, month_str, month_str),
     ).fetchall()
-    conn.close()
     return rows
+
+
+def get_setting(key, default=None):
+    conn = get_connection()
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(key, value):
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, str(value)),
+    )
+    conn.commit()
+
+
+def get_budget(month):
+    conn = get_connection()
+    row = conn.execute("SELECT amount FROM monthly_budget WHERE month = ?", (month,)).fetchone()
+    return row["amount"] if row else 0.0
+
+
+def set_budget(month, amount):
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO monthly_budget (month, amount) VALUES (?, ?) ON CONFLICT(month) DO UPDATE SET amount = excluded.amount",
+        (month, amount),
+    )
+    conn.commit()
