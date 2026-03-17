@@ -1,0 +1,8 @@
+.env
+billing.db
+__pycache__/
+*.pyc
+/venv
+/.idea
+Billing.exe
+build.bat
