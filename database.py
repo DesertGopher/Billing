@@ -41,6 +41,15 @@ def init_db():
             effective_month TEXT    NOT NULL
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS checked_items (
+            item_id     INTEGER NOT NULL,
+            month       TEXT    NOT NULL,
+            is_checked  INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (item_id, month),
+            FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+        )
+    """)
     if not _column_exists(conn, "items", "date"):
         conn.execute("ALTER TABLE items ADD COLUMN date TEXT")
     conn.commit()
@@ -139,9 +148,27 @@ def delete_item(item_id):
     conn.close()
 
 
+def update_item_name(item_id, new_name):
+    conn = get_connection()
+    conn.execute("UPDATE items SET name = ? WHERE id = ?", (new_name, item_id))
+    conn.commit()
+    conn.close()
+
+
 def update_item_date(item_id, new_date):
     conn = get_connection()
     conn.execute("UPDATE items SET date = ? WHERE id = ?", (new_date, item_id))
+    conn.commit()
+    conn.close()
+
+
+def set_checked(item_id, month, checked):
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO checked_items (item_id, month, is_checked) VALUES (?, ?, ?)"
+        " ON CONFLICT(item_id, month) DO UPDATE SET is_checked = excluded.is_checked",
+        (item_id, month, int(checked)),
+    )
     conn.commit()
     conn.close()
 
@@ -160,12 +187,14 @@ def get_items_for_month(month_str):
                            i.amount
                        )
                    ELSE i.amount
-               END AS effective_amount
+               END AS effective_amount,
+               COALESCE(c.is_checked, 0) AS is_checked
         FROM items i
+        LEFT JOIN checked_items c ON c.item_id = i.id AND c.month = ?
         WHERE (i.is_recurring = 1 AND i.start_month <= ? AND (i.end_month IS NULL OR i.end_month >= ?))
            OR (i.is_recurring = 0 AND i.start_month = ?)
         """,
-        (month_str, month_str, month_str, month_str),
+        (month_str, month_str, month_str, month_str, month_str),
     ).fetchall()
     conn.close()
     return rows

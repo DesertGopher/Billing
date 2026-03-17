@@ -195,9 +195,12 @@ class EditRecurringDialog(ctk.CTkToplevel):
         content = ctk.CTkFrame(self, fg_color="transparent")
         content.pack(fill="both", expand=True, padx=20, pady=16)
 
-        ctk.CTkLabel(content, text=item['name'], font=ctk.CTkFont(size=14, weight="bold")).pack(anchor="w")
+        ctk.CTkLabel(content, text="Название", font=ctk.CTkFont(size=13)).pack(anchor="w")
+        self.name_entry = ctk.CTkEntry(content)
+        self.name_entry.pack(fill="x", pady=(2, 10))
+        self.name_entry.insert(0, item['name'])
 
-        ctk.CTkLabel(content, text="Сумма", font=ctk.CTkFont(size=13)).pack(anchor="w", pady=(10, 0))
+        ctk.CTkLabel(content, text="Сумма", font=ctk.CTkFont(size=13)).pack(anchor="w")
         self.amount_entry = ctk.CTkEntry(content)
         self.amount_entry.pack(fill="x", pady=(2, 10))
 
@@ -243,6 +246,12 @@ class EditRecurringDialog(ctk.CTkToplevel):
             return
         if amount <= 0:
             return
+
+        new_name = self.name_entry.get().strip()
+        if not new_name:
+            return
+        if new_name != self.item["name"]:
+            db.update_item_name(self.item["id"], new_name)
 
         only_this = self.scope_var.get() == "only_this"
         db.update_recurring_amount(self.item["id"], amount, self.current_month, only_this_month=only_this)
@@ -367,12 +376,20 @@ class ItemRow(ctk.CTkFrame):
         self.current_month = current_month
         self.app = app
 
-        self.grid_columnconfigure(2, weight=1)
+        self.grid_columnconfigure(3, weight=1)
+
+        self.check_var = ctk.BooleanVar(value=bool(item.get("is_checked", 0)))
+        cb = ctk.CTkCheckBox(self, text="", variable=self.check_var,
+                             width=20, height=20, checkbox_width=16, checkbox_height=16,
+                             corner_radius=4, border_width=2,
+                             command=self._toggle_checked,
+                             fg_color="#4CAF50" if item["category"] == "income" else "#EF5350")
+        cb.grid(row=0, column=0, padx=(6, 0), sticky="w")
 
         icon = "🔁" if item["is_recurring"] else "·"
         ctk.CTkLabel(self, text=icon, width=20, anchor="center",
                      font=ctk.CTkFont(size=10), text_color="#999"
-                     ).grid(row=0, column=0, padx=(6, 0), sticky="w")
+                     ).grid(row=0, column=1, padx=(2, 0), sticky="w")
 
         raw_date = item.get("date")
         if raw_date:
@@ -390,18 +407,18 @@ class ItemRow(ctk.CTkFrame):
             date_text = "—"
         ctk.CTkLabel(self, text=date_text, width=40, anchor="w",
                      font=ctk.CTkFont(size=11), text_color="gray"
-                     ).grid(row=0, column=1, padx=(2, 4), sticky="w")
+                     ).grid(row=0, column=2, padx=(2, 4), sticky="w")
 
         ctk.CTkLabel(self, text=item["name"], anchor="w",
                      font=ctk.CTkFont(size=12)
-                     ).grid(row=0, column=2, sticky="w")
+                     ).grid(row=0, column=3, sticky="w")
 
         display_amount = item["effective_amount"]
         amount_text = f"{format_amount(display_amount)} ₽"
         color = "#2E7D32" if item["category"] == "income" else "#C62828"
         ctk.CTkLabel(self, text=amount_text, text_color=color, anchor="e",
                      width=110, font=ctk.CTkFont(size=12)
-                     ).grid(row=0, column=3, padx=(4, 10), sticky="e")
+                     ).grid(row=0, column=4, padx=(4, 10), sticky="e")
 
         self._bind_events(self)
 
@@ -442,6 +459,9 @@ class ItemRow(ctk.CTkFrame):
     def _delete(self):
         db.delete_item(self.item["id"])
         self.on_change()
+
+    def _toggle_checked(self):
+        db.set_checked(self.item["id"], self.current_month, self.check_var.get())
 
     def _edit_recurring(self):
         EditRecurringDialog(self.app, self.item, self.current_month, on_save=self.on_change)
